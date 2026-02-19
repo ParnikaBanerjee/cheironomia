@@ -4,17 +4,19 @@ from vision.camera import Camera
 from vision.hand_pose import HandPoseTracker
 from ui.visual_debug import draw
 
-from gestures.buffer import GestureBuffer
 from gestures.normalize import normalize_sequence
 from gestures.record import save_sequence
-
+from conduction.controller import ConductionController
+from gestures.segmentation import GestureSegmenter
 
 
 def main():
     camera = Camera()
     tracker = HandPoseTracker()
-    gesture_buffer = GestureBuffer(window_seconds=1.0, fps=30)
+
     recording_label = None
+    controller = ConductionController()
+    segmenter = GestureSegmenter()
 
     while True:
         frame = camera.read()
@@ -23,53 +25,63 @@ def main():
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         data = tracker.process(rgb)
-        if data["arms"]:
-            gesture_buffer.add(data["arms"])
-        if gesture_buffer.is_full():
-            sequence = gesture_buffer.get_sequence()
-            norm_seq = normalize_sequence(sequence)
 
+        # -------- Segmentation --------
+        segment = None
+        if data["arms"]:
+            segment = segmenter.update(data["arms"])
+
+        if segment:
+
+            # -------- Save for Training (Segment-based) --------
             if recording_label:
+                norm_seq = normalize_sequence(segment)
                 save_sequence(norm_seq, recording_label)
+                print(f"[RECORDED] {recording_label}")
+                recording_label = None  # reset after one save
 
-            gesture_buffer.clear()
+            # -------- Conduction Controller --------
+            result = controller.update(segment)
+            if result:
+                print("Tempo:", result["tempo"],
+                      "Intensity:", result["intensity"])
 
-
-        # DEBUG: print arm joint coordinates
-        if data["arms"]:
-            arm_coords = {
-                k: (round(v[0], 3), round(v[1], 3), round(v[2], 3))
-                for k, v in data["arms"].items()
-            }
-            # print(arm_coords)
-
+        # -------- Visualization --------
         draw(frame, data)
-
         cv2.imshow("Virtual Orchestra – Gesture Capture", frame)
 
         key = cv2.waitKey(1) & 0xFF
 
         if key == ord('1'):
-            recording_label = "tempo_up"
-            print("Recording: tempo_up")
+            recording_label = "start"
+            print("Recording next segment as: start")
 
         elif key == ord('2'):
-            recording_label = "tempo_down"
-            print("Recording: tempo_down")
+            recording_label = "stop"
+            print("Recording next segment as: stop")
 
         elif key == ord('3'):
-            recording_label = "crescendo"
-            print("Recording: crescendo")
+            recording_label = "accent"
+            print("Recording next segment as: accent")
+
+        elif key == ord('4'):
+            recording_label = "cut"
+            print("Recording next segment as: cut")
+
+        elif key == ord('5'):
+            recording_label = "pattern_change"
+            print("Recording next segment as: pattern_change")
 
         elif key == ord('0'):
             recording_label = None
-            print("Recording stopped")
+            print("Recording cancelled")
 
         elif key == ord('q'):
             break
 
     camera.release()
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()
