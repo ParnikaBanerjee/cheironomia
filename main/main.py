@@ -1,5 +1,6 @@
 # main.py
 import cv2
+from pathlib import Path
 from vision.camera import Camera
 from vision.hand_pose import HandPoseTracker
 from ui.visual_debug import draw
@@ -8,6 +9,24 @@ from gestures.normalize import normalize_sequence
 from gestures.record import save_sequence
 from conduction.controller import ConductionController
 from gestures.segmentation import GestureSegmenter
+
+# Optional: Gesture classifier (if model is trained)
+gesture_classifier = None
+try:
+    from models.inference import GestureInference
+    model_path = Path("models/gesture_classifier_best.pth")
+    if model_path.exists():
+        gesture_classifier = GestureInference(
+            model_path=str(model_path),
+            sequence_length=60,
+            device="cpu"  # Use CPU for real-time performance
+        )
+        print("✓ Gesture classifier loaded and ready")
+    else:
+        print("ℹ️  Gesture classifier not trained yet. Run: python models/train.py")
+except Exception as e:
+    print(f"⚠️  Could not load gesture classifier: {e}")
+    print("   Continuing with conduction control only.")
 
 
 def main():
@@ -43,8 +62,21 @@ def main():
             # -------- Conduction Controller --------
             result = controller.update(segment)
             if result:
-                print("Tempo:", result["tempo"],
-                      "Intensity:", result["intensity"])
+                tempo = result["tempo"]
+                intensity = result["intensity"]
+                print(f"Tempo: {tempo:.1f} BPM | Intensity: {intensity:.3f}")
+                
+                # -------- Gesture Classification --------
+                if gesture_classifier is not None:
+                    try:
+                        norm_seq = normalize_sequence(segment)
+                        gesture_label, confidence = gesture_classifier.predict(norm_seq)
+                        if confidence >= gesture_classifier.confidence_threshold:
+                            print(f"  → Gesture: {gesture_label.upper()} (confidence: {confidence:.3f})")
+                        else:
+                            print(f"  → Gesture: uncertain (confidence: {confidence:.3f})")
+                    except Exception as e:
+                        print(f"  → Gesture classification error: {e}")
 
         # -------- Visualization --------
         draw(frame, data)
